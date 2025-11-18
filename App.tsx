@@ -14,17 +14,40 @@ const App: React.FC = () => {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [systemPrompt, setSystemPrompt] = useState<string>(DEFAULT_SYSTEM_PROMPT);
   const [speechRate, setSpeechRate] = useState<number>(1.0);
-  
+
+  const STORAGE_KEY = 'geminiTutorChatHistory' as const;
+
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Load chat history on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        setTranscript(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.warn('Failed to load chat history:', e);
+    }
+  }, []);
+
+  // Auto-save chat history (limit to last 20 entries)
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(transcript.slice(-20)));
+    } catch (e) {
+      console.warn('Failed to save chat history:', e);
+    }
+  }, [transcript]);
   const currentTranscriptionRef = useRef({ user: '', ai: '' });
 
   const cleanup = useCallback(() => {
     cleanupAudio();
     stopAllAudio();
     if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
   }, []);
 
@@ -52,14 +75,14 @@ const App: React.FC = () => {
       // Process and play the complete buffered audio with time-stretch
       finishAudioTurn();
     }
-    
+
     const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
     if (base64Audio) {
-        playAudio(base64Audio, speechRate);
+      playAudio(base64Audio, speechRate);
     }
 
     if (message.serverContent?.interrupted) {
-        stopAllAudio();
+      stopAllAudio();
     }
   }, [speechRate]);
 
@@ -69,7 +92,7 @@ const App: React.FC = () => {
     setStatus('error');
     cleanup();
   }, [cleanup]);
-  
+
   const handleClose = useCallback((e: CloseEvent) => {
     console.log('Gemini Live API connection closed.');
     cleanup();
@@ -77,7 +100,7 @@ const App: React.FC = () => {
       setStatus('idle');
     }
   }, [status, cleanup]);
-  
+
   const handleOpen = useCallback(() => {
     setStatus('live');
   }, []);
@@ -85,42 +108,51 @@ const App: React.FC = () => {
   const startConversation = async () => {
     setStatus('connecting');
     setErrorMessage(null);
-    setTranscript([]);
+    // Keep existing transcript for context, don't clear
     cleanup(); // Clean up any previous state
-    
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = stream;
 
-        const session = await connectToGeminiLive({
-            stream,
-            systemPrompt,
-            onMessage: handleMessage,
-            onError: handleError,
-            onClose: handleClose,
-            onOpen: handleOpen,
-        });
-        sessionRef.current = session;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      // Build conversation history context (last 10 turns)
+      const historyContext = transcript.slice(-10).map(entry => `${entry.speaker.toUpperCase()}: ${entry.text}`).join('\\n');
+      const enhancedPrompt = `${systemPrompt}\\n\\nContinue this conversation from the following history:\\n${historyContext}`;
+
+      const session = await connectToGeminiLive({
+        stream,
+        systemPrompt: enhancedPrompt,
+        onMessage: handleMessage,
+        onError: handleError,
+        onClose: handleClose,
+        onOpen: handleOpen,
+      });
+      sessionRef.current = session;
     } catch (error) {
-        console.error("Failed to start conversation:", error);
-        let message = 'Failed to start. Please check your microphone permissions and API key.';
-        if (error instanceof Error && error.name === 'NotAllowedError') {
-            message = 'Microphone access was denied. Please allow microphone access in your browser settings.';
-        } else if (error instanceof Error) {
-            message = error.message;
-        }
-        setErrorMessage(message);
-        setStatus('error');
-        cleanup();
+      console.error("Failed to start conversation:", error);
+      let message = 'Failed to start. Please check your microphone permissions and API key.';
+      if (error instanceof Error && error.name === 'NotAllowedError') {
+        message = 'Microphone access was denied. Please allow microphone access in your browser settings.';
+      } else if (error instanceof Error) {
+        message = error.message;
+      }
+      setErrorMessage(message);
+      setStatus('error');
+      cleanup();
     }
   };
-  
+
   const stopConversation = () => {
     if (sessionRef.current && status === 'live') {
-        setStatus('stopping');
-        sessionRef.current.close();
-        sessionRef.current = null;
+      setStatus('stopping');
+      sessionRef.current.close();
+      sessionRef.current = null;
     }
+  };
+
+  const clearHistory = () => {
+    setTranscript([]);
+    localStorage.removeItem(STORAGE_KEY);
   };
 
   const handleToggleConversation = () => {
@@ -130,7 +162,7 @@ const App: React.FC = () => {
       startConversation();
     }
   };
-  
+
   useEffect(() => {
     return () => {
       if (sessionRef.current) {
@@ -151,23 +183,24 @@ const App: React.FC = () => {
 
       <main className="flex-grow flex flex-col gap-4 max-w-4xl w-full mx-auto">
         <div className="h-10 flex items-center justify-center">
-            {errorMessage ? (
-                <p className="text-red-400 text-center">{errorMessage}</p>
-            ) : <StatusIndicator status={status} />}
+          {errorMessage ? (
+            <p className="text-red-400 text-center">{errorMessage}</p>
+          ) : <StatusIndicator status={status} />}
         </div>
-        
+
         <Transcript entries={transcript} />
 
-        <Controls 
+        <Controls
           status={status}
           systemPrompt={systemPrompt}
           setSystemPrompt={setSystemPrompt}
           speechRate={speechRate}
           setSpeechRate={setSpeechRate}
           onToggleConversation={handleToggleConversation}
+          clearHistory={clearHistory}
         />
       </main>
-      
+
       <footer className="text-center text-gray-500 text-xs mt-4">
         <p>Powered by Google Gemini. For educational purposes only.</p>
       </footer>

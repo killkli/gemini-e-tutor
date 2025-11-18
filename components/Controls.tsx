@@ -11,6 +11,7 @@ interface ControlsProps {
   speechRate: number;
   setSpeechRate: (rate: number) => void;
   onToggleConversation: () => void;
+  clearHistory?: () => void;
 }
 
 const Controls: React.FC<ControlsProps> = ({
@@ -20,6 +21,7 @@ const Controls: React.FC<ControlsProps> = ({
   speechRate,
   setSpeechRate,
   onToggleConversation,
+  clearHistory,
 }) => {
   const isRunning = status === 'live' || status === 'connecting';
   const [showSettings, setShowSettings] = React.useState(false);
@@ -27,13 +29,23 @@ const Controls: React.FC<ControlsProps> = ({
   return (
     <div className="p-4 bg-gray-800/50 rounded-lg flex flex-col items-center gap-4">
       <div className="w-full">
-        <div className="flex justify-end">
-          <button 
-            onClick={() => setShowSettings(!showSettings)} 
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
             className="p-2 text-gray-400 hover:text-white transition-colors"
             aria-label="Toggle Settings"
           >
             <SettingsIcon className="w-6 h-6" />
+          </button>
+          <button
+            onClick={clearHistory ? clearHistory : undefined}
+            className="p-2 text-gray-400 hover:text-red-400 transition-colors"
+            aria-label="Clear chat history"
+            title="Clear chat history"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
