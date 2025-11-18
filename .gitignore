@@ -25,3 +25,4 @@ dist-ssr
 
 # Serena/Claude Code tools
 .serena/
+.env

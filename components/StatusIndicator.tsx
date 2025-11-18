@@ -7,20 +7,38 @@ interface StatusIndicatorProps {
 }
 
 const statusConfig = {
-  idle: { text: 'Ready', color: 'bg-gray-400' },
-  connecting: { text: 'Connecting...', color: 'bg-yellow-400 animate-pulse' },
-  live: { text: 'Live', color: 'bg-green-500 animate-pulse' },
-  stopping: { text: 'Stopping...', color: 'bg-yellow-400' },
-  error: { text: 'Error', color: 'bg-red-500' },
+  idle: { text: '準備就緒', color: '#78716c', pulse: false },
+  connecting: { text: '連接中...', color: '#f59e0b', pulse: true },
+  live: { text: '對話進行中', color: '#10b981', pulse: true },
+  stopping: { text: '停止中...', color: '#f59e0b', pulse: false },
+  error: { text: '連接錯誤', color: '#ef4444', pulse: false },
 };
 
 const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status }) => {
-  const { text, color } = statusConfig[status];
+  const config = statusConfig[status];
 
   return (
-    <div className="flex items-center justify-center space-x-2 text-sm text-gray-300">
-      <span className={`w-3 h-3 rounded-full ${color}`}></span>
-      <span>{text}</span>
+    <div className="flex items-center justify-center gap-3 px-4 py-2 rounded-full"
+      style={{
+        background: 'var(--color-bg-secondary)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      <div className="relative">
+        <span
+          className="block w-3 h-3 rounded-full"
+          style={{ background: config.color }}
+        ></span>
+        {config.pulse && (
+          <span
+            className="absolute inset-0 rounded-full animate-ping"
+            style={{ background: config.color, opacity: 0.6 }}
+          ></span>
+        )}
+      </div>
+      <span className="text-base font-medium" style={{ fontFamily: 'var(--font-body)' }}>
+        {config.text}
+      </span>
     </div>
   );
 };

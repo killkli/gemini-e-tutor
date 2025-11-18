@@ -5,30 +5,44 @@ import { connectToGeminiLive, cleanupAudio, playAudio, finishAudioTurn, stopAllA
 import Transcript from './components/Transcript';
 import Controls from './components/Controls';
 import StatusIndicator from './components/StatusIndicator';
+import RoleSetupModal from './components/RoleSetupModal';
 
-const DEFAULT_SYSTEM_PROMPT = `You are an AI English tutor named Alex. Your goal is to have a natural, friendly conversation with the user to help them practice their English speaking skills. Correct their grammar and suggest better vocabulary when appropriate, but do it gently and conversationally. Keep your responses concise and encouraging.`;
+const DEFAULT_SYSTEM_PROMPT = `你是一位名叫 Alex 的 AI 英文家教。你的目標是與使用者進行自然、友善的對話，幫助他們練習英語口說能力。當適當的時候，溫和地糾正他們的文法並建議更好的詞彙，但要以對話的方式進行。保持你的回應簡潔且鼓勵人心。`;
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [systemPrompt, setSystemPrompt] = useState<string>(DEFAULT_SYSTEM_PROMPT);
+  const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [speechRate, setSpeechRate] = useState<number>(1.0);
+  const [showRoleSetup, setShowRoleSetup] = useState<boolean>(false);
 
   const STORAGE_KEY = 'geminiTutorChatHistory' as const;
+  const ROLE_STORAGE_KEY = 'geminiTutorSystemPrompt' as const;
 
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Load chat history on mount
+  // Load system prompt and chat history on mount
   useEffect(() => {
     try {
+      // Check for saved system prompt
+      const savedPrompt = localStorage.getItem(ROLE_STORAGE_KEY);
+      if (savedPrompt) {
+        setSystemPrompt(savedPrompt);
+      } else {
+        // First time user - show setup modal
+        setShowRoleSetup(true);
+      }
+
+      // Load chat history
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         setTranscript(JSON.parse(saved));
       }
     } catch (e) {
-      console.warn('Failed to load chat history:', e);
+      console.warn('Failed to load saved data:', e);
+      setShowRoleSetup(true);
     }
   }, []);
 
@@ -40,7 +54,24 @@ const App: React.FC = () => {
       console.warn('Failed to save chat history:', e);
     }
   }, [transcript]);
+
+  // Auto-save system prompt
+  useEffect(() => {
+    if (systemPrompt) {
+      try {
+        localStorage.setItem(ROLE_STORAGE_KEY, systemPrompt);
+      } catch (e) {
+        console.warn('Failed to save system prompt:', e);
+      }
+    }
+  }, [systemPrompt]);
+
   const currentTranscriptionRef = useRef({ user: '', ai: '' });
+
+  const handleRoleSetupComplete = (prompt: string) => {
+    setSystemPrompt(prompt);
+    setShowRoleSetup(false);
+  };
 
   const cleanup = useCallback(() => {
     cleanupAudio();
@@ -173,23 +204,49 @@ const App: React.FC = () => {
   }, [cleanup]);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col p-4 font-sans">
-      <header className="text-center mb-4">
-        <h1 className="text-3xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-400">
-          Gemini English Tutor
+    <>
+      {/* Role Setup Modal */}
+      {showRoleSetup && <RoleSetupModal onComplete={handleRoleSetupComplete} />}
+
+      <div className="min-h-screen flex flex-col p-4 sm:p-6 lg:p-8">
+        {/* Header */}
+        <header className="text-center mb-8 animate-fade-in-up">
+        <h1
+          className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gradient mb-2"
+          style={{ fontFamily: 'var(--font-display)' }}
+        >
+          英文家教
         </h1>
-        <p className="text-gray-400 mt-1">Practice your English with a friendly AI companion</p>
+        <p className="opacity-70" style={{ fontFamily: 'var(--font-body)' }}>
+          與 Gemini AI 助理一起練習您的英文
+        </p>
+        <div className="decorative-line mt-4 max-w-md mx-auto"></div>
       </header>
 
-      <main className="flex-grow flex flex-col gap-4 max-w-4xl w-full mx-auto">
-        <div className="h-10 flex items-center justify-center">
+      {/* Main Content */}
+      <main className="flex-grow flex flex-col gap-6 max-w-5xl w-full mx-auto">
+        {/* Status / Error Display */}
+        <div className="flex items-center justify-center min-h-[3rem]">
           {errorMessage ? (
-            <p className="text-red-400 text-center">{errorMessage}</p>
-          ) : <StatusIndicator status={status} />}
+            <div
+              className="px-6 py-3 rounded-lg border animate-fade-in-up"
+              style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                borderColor: '#ef4444',
+                color: '#fca5a5',
+              }}
+            >
+              <p className="text-base font-medium">{errorMessage}</p>
+            </div>
+          ) : (
+            <StatusIndicator status={status} />
+          )}
         </div>
 
+        {/* Transcript */}
         <Transcript entries={transcript} />
 
+        {/* Controls */}
         <Controls
           status={status}
           systemPrompt={systemPrompt}
@@ -201,10 +258,12 @@ const App: React.FC = () => {
         />
       </main>
 
-      <footer className="text-center text-gray-500 text-xs mt-4">
-        <p>Powered by Google Gemini. For educational purposes only.</p>
+      {/* Footer */}
+      <footer className="text-center mt-8 opacity-40" style={{ fontFamily: 'var(--font-body)' }}>
+        <p className="text-xs">由 Google Gemini 提供支援 • 僅供教育用途</p>
       </footer>
     </div>
+    </>
   );
 };
 
