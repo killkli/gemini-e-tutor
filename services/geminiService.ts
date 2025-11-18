@@ -111,12 +111,33 @@ let mediaStreamSource: MediaStreamAudioSourceNode;
 let nextStartTime = 0;
 const sources = new Set<AudioBufferSourceNode>();
 
-// Audio chunk buffering for complete turn processing
-let audioChunkBuffer: string[] = []; // Store base64 audio data
+// Audio chunk buffering for streaming with mini-batches
+let audioChunkBuffer: string[] = []; // Store base64 audio data for mini-batch
 let currentSpeechRate: number = 1.0;
-let currentAudioElement: HTMLAudioElement | null = null;
+
+// Audio playback queue and state
 let audioQueue: Array<{ url: string; rate: number }> = [];
+let currentAudioElement: HTMLAudioElement | null = null;
 let isPlaying: boolean = false;
+
+// Mini-batch streaming configuration (dynamically adjusted based on speech rate)
+const BASE_BATCH_SIZE = 12; // Larger batches = smoother playback, fewer glitches
+const BASE_BATCH_TIMEOUT = 500; // Longer timeout for more complete batches
+let chunkBatchTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Calculate dynamic batch parameters based on speech rate
+function getBatchConfig(speechRate: number) {
+    // Key insight: slower speech = each chunk plays LONGER
+    // So we need MORE chunks to compensate, otherwise queue builds up
+    // Formula: multiply by inverse of speech rate for balance
+    const adjustedSize = Math.ceil(BASE_BATCH_SIZE / speechRate);
+    const adjustedTimeout = Math.ceil(BASE_BATCH_TIMEOUT / speechRate);
+
+    return {
+        batchSize: Math.max(8, adjustedSize), // Minimum 8 chunks
+        timeout: Math.max(400, adjustedTimeout) // Minimum 400ms
+    };
+}
 
 interface ConnectToGeminiLiveParams {
     stream: MediaStream;
@@ -216,12 +237,44 @@ function mergeAudioChunks(base64Chunks: string[]): Uint8Array {
     return merged;
 }
 
-/**
- * Plays the next audio in queue
- */
+// Flush buffered chunks and schedule for seamless Web Audio API playback
+function flushAudioBatch() {
+    if (audioChunkBuffer.length === 0) {
+        return;
+    }
+
+    console.log('[flushAudioBatch] Flushing', audioChunkBuffer.length, 'chunks with rate:', currentSpeechRate);
+
+    // Merge buffered chunks
+    const mergedPcm = mergeAudioChunks(audioChunkBuffer);
+    audioChunkBuffer = []; // Clear buffer
+
+    // Clear the timeout
+    if (chunkBatchTimer) {
+        clearTimeout(chunkBatchTimer);
+        chunkBatchTimer = null;
+    }
+
+    // Convert to WAV and create blob URL
+    const wavBuffer = pcmToWav(mergedPcm, 24000, 1);
+    const wavBlob = new window.Blob([wavBuffer], { type: 'audio/wav' });
+    const blobUrl = URL.createObjectURL(wavBlob);
+
+    // Add to queue
+    audioQueue.push({ url: blobUrl, rate: currentSpeechRate });
+
+    if (!isPlaying) {
+        playNextInQueue();
+    }
+
+    console.log('[flushAudioBatch] Queued audio, queue length:', audioQueue.length);
+}
+
+// Play next audio in queue with precise timing to minimize gaps
 function playNextInQueue() {
     if (audioQueue.length === 0) {
         isPlaying = false;
+        console.log('[playNextInQueue] Queue empty');
         return;
     }
 
@@ -233,34 +286,82 @@ function playNextInQueue() {
     audio.preservesPitch = true;
     currentAudioElement = audio;
 
+    let hasTriggeredNext = false;
+
+    console.log('[playNextInQueue] Playing audio with rate:', rate, 'queue remaining:', audioQueue.length);
+
+    // Monitor playback progress to trigger next audio early
+    audio.ontimeupdate = () => {
+        if (hasTriggeredNext) return;
+        
+        const remaining = audio.duration - audio.currentTime;
+        
+        // Start next audio when 30ms remaining to eliminate gap
+        if (remaining <= 0.03 && audioQueue.length > 0) {
+            hasTriggeredNext = true;
+            console.log('[playNextInQueue] Triggering next audio early, remaining:', remaining.toFixed(3), 's');
+            playNextInQueue();
+        }
+    };
+
     audio.onended = () => {
-        URL.revokeObjectURL(url); // Clean up blob URL
+        console.log('[playNextInQueue] Audio ended');
+        URL.revokeObjectURL(url);
         currentAudioElement = null;
-        playNextInQueue(); // Play next in queue
+        
+        // Only trigger next if we didn't already do it early
+        if (!hasTriggeredNext && audioQueue.length > 0) {
+            playNextInQueue();
+        } else if (audioQueue.length === 0) {
+            isPlaying = false;
+        }
     };
 
     audio.onerror = (e) => {
-        console.error('[playAudio] Error playing audio:', e);
+        console.error('[playNextInQueue] Error:', e);
         URL.revokeObjectURL(url);
         currentAudioElement = null;
-        playNextInQueue(); // Try next in queue
+        if (!hasTriggeredNext) {
+            playNextInQueue();
+        }
     };
 
     audio.play().catch(err => {
-        console.error('[playAudio] Failed to play audio:', err);
+        console.error('[playNextInQueue] Failed to play:', err);
         URL.revokeObjectURL(url);
         currentAudioElement = null;
-        playNextInQueue();
+        if (!hasTriggeredNext) {
+            playNextInQueue();
+        }
     });
 }
 
 export async function playAudio(base64Audio: string, speechRate: number) {
-    // Store speech rate for later processing
+    // Store speech rate for current playback
     currentSpeechRate = speechRate;
 
-    // Buffer the audio chunk (we'll play the complete turn when it's done)
-    console.log('[playAudio] Buffering chunk, total chunks:', audioChunkBuffer.length + 1);
+    // Get dynamic batch configuration based on speech rate
+    const { batchSize, timeout } = getBatchConfig(speechRate);
+
+    // Add chunk to buffer
     audioChunkBuffer.push(base64Audio);
+    console.log('[playAudio] Buffered chunk', audioChunkBuffer.length + '/' + batchSize, 'rate:', speechRate, 'timeout:', timeout + 'ms');
+
+    // Clear existing timeout
+    if (chunkBatchTimer) {
+        clearTimeout(chunkBatchTimer);
+    }
+
+    // If buffer reaches dynamic batch size, flush immediately
+    if (audioChunkBuffer.length >= batchSize) {
+        flushAudioBatch();
+    } else {
+        // Otherwise set timeout based on speech rate to flush after delay
+        chunkBatchTimer = setTimeout(() => {
+            console.log('[playAudio] Batch timeout reached, flushing', audioChunkBuffer.length, 'chunks');
+            flushAudioBatch();
+        }, timeout);
+    }
 }
 
 /**
@@ -268,33 +369,28 @@ export async function playAudio(base64Audio: string, speechRate: number) {
  * Merges all buffered chunks and plays with native playbackRate + preservesPitch
  */
 export async function finishAudioTurn() {
-    if (audioChunkBuffer.length === 0) {
-        console.log('[finishAudioTurn] No buffered audio to process');
-        return;
+    // Flush any remaining buffered chunks when turn is complete
+    console.log('[finishAudioTurn] Turn complete, flushing remaining chunks');
+    
+    // Clear timeout if any
+    if (chunkBatchTimer) {
+        clearTimeout(chunkBatchTimer);
+        chunkBatchTimer = null;
     }
-
-    console.log('[finishAudioTurn] Processing', audioChunkBuffer.length, 'buffered chunks with rate:', currentSpeechRate);
-
-    // Merge all buffered chunks into one PCM buffer
-    const mergedPcm = mergeAudioChunks(audioChunkBuffer);
-    audioChunkBuffer = []; // Clear buffer
-
-    // Convert PCM to WAV and create blob URL
-    const wavBuffer = pcmToWav(mergedPcm, 24000, 1); // 24kHz, mono
-    const wavBlob = new window.Blob([wavBuffer], { type: 'audio/wav' });
-    const blobUrl = URL.createObjectURL(wavBlob);
-
-    // Add to queue and start playing if not already playing
-    audioQueue.push({ url: blobUrl, rate: currentSpeechRate });
-
-    if (!isPlaying) {
-        playNextInQueue();
-    }
-
-    console.log('[finishAudioTurn] Queued audio for playback');
+    
+    // Flush remaining chunks
+    flushAudioBatch();
+    
+    console.log('[finishAudioTurn] Audio turn complete');
 }
 
 export function stopAllAudio() {
+    // Clear batch timer
+    if (chunkBatchTimer) {
+        clearTimeout(chunkBatchTimer);
+        chunkBatchTimer = null;
+    }
+
     // Clear buffered audio chunks
     audioChunkBuffer = [];
 
@@ -312,14 +408,7 @@ export function stopAllAudio() {
     audioQueue = [];
     isPlaying = false;
 
-    // Clean up old Web Audio API sources if any
-    if (outputAudioContext) {
-        for (const source of sources.values()) {
-            source.stop();
-            sources.delete(source);
-        }
-        nextStartTime = 0;
-    }
+    console.log('[stopAllAudio] All audio stopped and queue cleared');
 }
 
 export function cleanupAudio() {
