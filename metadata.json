@@ -1,0 +1,7 @@
+{
+  "name": "Gemini English Tutor",
+  "description": "An interactive English conversational education tool powered by the Gemini 2.5 Flash Live API. Practice your speaking skills with an AI tutor, get real-time transcriptions, and adjust the tutor's speech speed to your liking.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
