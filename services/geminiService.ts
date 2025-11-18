@@ -53,86 +53,52 @@ function createPcmBlob(data: Float32Array): Blob {
 }
 
 /**
- * Stretches the duration of an AudioBuffer without changing its pitch, using a
- * robust Synchronous Overlap-Add (SOLA) method. This version ensures the entire
- * input is processed to prevent audio from being cut off.
- * @param audioBuffer The audio buffer to process.
- * @param rate The desired speed multiplier (e.g., 1.5 for 50% faster, 0.75 for 25% slower).
- * @param ctx The AudioContext, used to create the output buffer.
- * @returns A new AudioBuffer with the stretched audio.
+ * Converts PCM audio data to WAV format
  */
-function timeStretch(
-  audioBuffer: AudioBuffer,
-  rate: number,
-  ctx: AudioContext
-): AudioBuffer {
-  const inputData = audioBuffer.getChannelData(0);
-  const inputLength = inputData.length;
-  const sampleRate = audioBuffer.sampleRate;
+function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number): ArrayBuffer {
+  const bytesPerSample = 2; // 16-bit
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = pcmData.length;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
 
-  const grainSize = 2048; // A good size for speech, balances quality and performance.
-  const hopSize = grainSize / 2; // Use 50% overlap for smooth blending with a Hanning window.
-
-  // Create a Hanning window to apply to each grain to avoid clicking artifacts.
-  const window = new Float32Array(grainSize);
-  for (let i = 0; i < grainSize; i++) {
-    window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (grainSize - 1)));
-  }
-  
-  // Estimate output length and create a buffer large enough to hold the result.
-  const estimatedOutputLength = Math.ceil(inputLength / rate);
-  const outputData = new Float32Array(estimatedOutputLength + grainSize);
-
-  let outputPointer = 0;
-  let inputPointer = 0.0;
-  let actualOutputLength = 0;
-
-  // Main processing loop: continue as long as our input pointer is within the bounds of the input data.
-  while (inputPointer < inputLength) {
-    const i_inputPointer = Math.floor(inputPointer);
-
-    // Create a grain buffer to hold a chunk of the input.
-    const grain = new Float32Array(grainSize);
-    
-    // Copy data from the input into the grain, applying the window function.
-    // If we read past the end of the input, the rest of the grain will be zeros (silent).
-    for (let i = 0; i < grainSize; i++) {
-      if (i_inputPointer + i < inputLength) {
-        grain[i] = inputData[i_inputPointer + i] * window[i];
-      } else {
-        grain[i] = 0; // Zero-pad the end.
-      }
+  // WAV header
+  const writeString = (offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
     }
+  };
 
-    // Overlap-add the processed grain into the output buffer.
-    for (let i = 0; i < grainSize; i++) {
-      // Ensure we don't write past the allocated output buffer.
-      if (outputPointer + i < outputData.length) {
-        outputData[outputPointer + i] += grain[i];
-      }
-    }
-    
-    // Update the actual length of the output signal based on the last write position.
-    actualOutputLength = outputPointer + grainSize;
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
 
-    // Advance the pointers for the next iteration.
-    outputPointer += hopSize;
-    inputPointer += hopSize * rate;
-  }
-  
-  // If no audio was processed, return a tiny silent buffer to avoid errors.
-  if (actualOutputLength === 0) {
-      return ctx.createBuffer(1, 1, sampleRate);
-  }
+  // Copy PCM data
+  const pcmView = new Uint8Array(buffer, 44);
+  pcmView.set(pcmData);
 
-  // Trim the output buffer to the exact length of the audio data we generated.
-  const trimmedOutput = outputData.subarray(0, actualOutputLength);
+  return buffer;
+}
 
-  // Create the final, correctly sized AudioBuffer.
-  const finalBuffer = ctx.createBuffer(1, trimmedOutput.length, sampleRate);
-  finalBuffer.copyToChannel(trimmedOutput, 0);
-
-  return finalBuffer;
+/**
+ * Converts base64 PCM audio to WAV Blob URL for use with HTMLAudioElement
+ */
+function createWavBlobUrl(base64Data: string, sampleRate: number, numChannels: number): string {
+  const pcmData = decode(base64Data);
+  const wavData = pcmToWav(pcmData, sampleRate, numChannels);
+  const blob = new window.Blob([wavData], { type: 'audio/wav' });
+  return URL.createObjectURL(blob);
 }
 
 
@@ -144,6 +110,13 @@ let scriptProcessor: ScriptProcessorNode;
 let mediaStreamSource: MediaStreamAudioSourceNode;
 let nextStartTime = 0;
 const sources = new Set<AudioBufferSourceNode>();
+
+// Audio chunk buffering for complete turn processing
+let audioChunkBuffer: string[] = []; // Store base64 audio data
+let currentSpeechRate: number = 1.0;
+let currentAudioElement: HTMLAudioElement | null = null;
+let audioQueue: Array<{ url: string; rate: number }> = [];
+let isPlaying: boolean = false;
 
 interface ConnectToGeminiLiveParams {
     stream: MediaStream;
@@ -215,42 +188,131 @@ export function initializeOutputAudioContext(): AudioContext {
     return outputAudioContext;
 }
 
-export async function playAudio(base64Audio: string, speechRate: number) {
-    const oac = initializeOutputAudioContext();
-    nextStartTime = Math.max(nextStartTime, oac.currentTime);
-    
-    let audioBuffer = await decodeAudioData(
-        decode(base64Audio),
-        oac,
-        24000,
-        1,
-    );
-
-    // If the speech rate is not the default, apply our time-stretching algorithm.
-    if (speechRate !== 1.0 && speechRate > 0) {
-      try {
-        audioBuffer = timeStretch(audioBuffer, speechRate, oac);
-      } catch (e) {
-        console.error("Failed to time-stretch audio, playing at normal speed.", e);
-      }
+/**
+ * Merges multiple base64 PCM audio chunks into a single PCM buffer
+ */
+function mergeAudioChunks(base64Chunks: string[]): Uint8Array {
+    if (base64Chunks.length === 0) {
+        return new Uint8Array(0);
+    }
+    if (base64Chunks.length === 1) {
+        return decode(base64Chunks[0]);
     }
 
-    const source = oac.createBufferSource();
-    source.buffer = audioBuffer;
-    // We no longer change playbackRate, as the buffer itself has been modified.
-    source.connect(oac.destination);
-    
-    source.addEventListener('ended', () => {
-        sources.delete(source);
-    });
+    // Decode all chunks
+    const chunks = base64Chunks.map(chunk => decode(chunk));
 
-    source.start(nextStartTime);
-    // The duration of the audio buffer is now correct for the new speed.
-    nextStartTime += audioBuffer.duration;
-    sources.add(source);
+    // Calculate total length
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+    // Merge into single buffer
+    const merged = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+    }
+
+    return merged;
+}
+
+/**
+ * Plays the next audio in queue
+ */
+function playNextInQueue() {
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+    }
+
+    const { url, rate } = audioQueue.shift()!;
+    isPlaying = true;
+
+    const audio = new Audio(url);
+    audio.playbackRate = rate;
+    audio.preservesPitch = true;
+    currentAudioElement = audio;
+
+    audio.onended = () => {
+        URL.revokeObjectURL(url); // Clean up blob URL
+        currentAudioElement = null;
+        playNextInQueue(); // Play next in queue
+    };
+
+    audio.onerror = (e) => {
+        console.error('[playAudio] Error playing audio:', e);
+        URL.revokeObjectURL(url);
+        currentAudioElement = null;
+        playNextInQueue(); // Try next in queue
+    };
+
+    audio.play().catch(err => {
+        console.error('[playAudio] Failed to play audio:', err);
+        URL.revokeObjectURL(url);
+        currentAudioElement = null;
+        playNextInQueue();
+    });
+}
+
+export async function playAudio(base64Audio: string, speechRate: number) {
+    // Store speech rate for later processing
+    currentSpeechRate = speechRate;
+
+    // Buffer the audio chunk (we'll play the complete turn when it's done)
+    console.log('[playAudio] Buffering chunk, total chunks:', audioChunkBuffer.length + 1);
+    audioChunkBuffer.push(base64Audio);
+}
+
+/**
+ * Called when a complete audio turn is finished (turnComplete signal)
+ * Merges all buffered chunks and plays with native playbackRate + preservesPitch
+ */
+export async function finishAudioTurn() {
+    if (audioChunkBuffer.length === 0) {
+        console.log('[finishAudioTurn] No buffered audio to process');
+        return;
+    }
+
+    console.log('[finishAudioTurn] Processing', audioChunkBuffer.length, 'buffered chunks with rate:', currentSpeechRate);
+
+    // Merge all buffered chunks into one PCM buffer
+    const mergedPcm = mergeAudioChunks(audioChunkBuffer);
+    audioChunkBuffer = []; // Clear buffer
+
+    // Convert PCM to WAV and create blob URL
+    const wavBuffer = pcmToWav(mergedPcm, 24000, 1); // 24kHz, mono
+    const wavBlob = new window.Blob([wavBuffer], { type: 'audio/wav' });
+    const blobUrl = URL.createObjectURL(wavBlob);
+
+    // Add to queue and start playing if not already playing
+    audioQueue.push({ url: blobUrl, rate: currentSpeechRate });
+
+    if (!isPlaying) {
+        playNextInQueue();
+    }
+
+    console.log('[finishAudioTurn] Queued audio for playback');
 }
 
 export function stopAllAudio() {
+    // Clear buffered audio chunks
+    audioChunkBuffer = [];
+
+    // Stop current audio element
+    if (currentAudioElement) {
+        currentAudioElement.pause();
+        currentAudioElement.currentTime = 0;
+        currentAudioElement = null;
+    }
+
+    // Clear audio queue and revoke blob URLs
+    for (const item of audioQueue) {
+        URL.revokeObjectURL(item.url);
+    }
+    audioQueue = [];
+    isPlaying = false;
+
+    // Clean up old Web Audio API sources if any
     if (outputAudioContext) {
         for (const source of sources.values()) {
             source.stop();
@@ -261,6 +323,9 @@ export function stopAllAudio() {
 }
 
 export function cleanupAudio() {
+    // Stop all audio playback
+    stopAllAudio();
+
     if (scriptProcessor) {
         scriptProcessor.disconnect();
     }

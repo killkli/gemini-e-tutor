@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Session } from '@google/genai';
 import { AppStatus, TranscriptEntry } from './types';
-import { connectToGeminiLive, cleanupAudio, playAudio, stopAllAudio } from './services/geminiService';
+import { connectToGeminiLive, cleanupAudio, playAudio, finishAudioTurn, stopAllAudio } from './services/geminiService';
 import Transcript from './components/Transcript';
 import Controls from './components/Controls';
 import StatusIndicator from './components/StatusIndicator';
@@ -39,7 +39,7 @@ const App: React.FC = () => {
     if (message.serverContent?.turnComplete) {
       const userText = currentTranscriptionRef.current.user.trim();
       const aiText = currentTranscriptionRef.current.ai.trim();
-      
+
       setTranscript(prev => {
         const newEntries: TranscriptEntry[] = [];
         if (userText) newEntries.push({ speaker: 'user', text: userText });
@@ -48,6 +48,9 @@ const App: React.FC = () => {
       });
 
       currentTranscriptionRef.current = { user: '', ai: '' };
+
+      // Process and play the complete buffered audio with time-stretch
+      finishAudioTurn();
     }
     
     const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
