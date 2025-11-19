@@ -11,6 +11,9 @@ const STORAGE_KEYS = {
 const DEFAULT_SETTINGS: UserSettings = {
   systemPrompt: `你是一位名叫 Alex 的 AI 英文家教。你的目標是與使用者進行自然、友善的對話，幫助他們練習英語口說能力。當適當的時候，溫和地糾正他們的文法並建議更好的詞彙，但要以對話的方式進行。保持你的回應簡潔且鼓勵人心。`,
   speechRate: 1.0,
+  apiKey: '',
+  voiceModel: 'gemini-2.5-flash-native-audio-preview-09-2025',
+  summaryModel: 'models/gemini-flash-latest',
 };
 
 export const storageService = {
@@ -72,8 +75,9 @@ export const storageService = {
   // Settings
   getUserSettings: (userId: string): UserSettings => {
     try {
-      const settings = localStorage.getItem(STORAGE_KEYS.SETTINGS_PREFIX + userId);
-      return settings ? JSON.parse(settings) : DEFAULT_SETTINGS;
+      const settingsStr = localStorage.getItem(STORAGE_KEYS.SETTINGS_PREFIX + userId);
+      const parsed = settingsStr ? JSON.parse(settingsStr) : {};
+      return { ...DEFAULT_SETTINGS, ...parsed };
     } catch (e) {
       console.error(`Failed to load settings for user ${userId}:`, e);
       return DEFAULT_SETTINGS;

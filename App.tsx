@@ -9,6 +9,7 @@ import Controls from './components/Controls';
 import StatusIndicator from './components/StatusIndicator';
 import RoleSetupModal from './components/RoleSetupModal';
 import UserManagement from './components/UserManagement';
+import ApiKeyModal from './components/ApiKeyModal';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>('idle');
@@ -16,6 +17,9 @@ const App: React.FC = () => {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [speechRate, setSpeechRate] = useState<number>(1.0);
+  const [apiKey, setApiKey] = useState<string>('');
+  const [voiceModel, setVoiceModel] = useState<string>('');
+  const [summaryModel, setSummaryModel] = useState<string>('');
   const [showRoleSetup, setShowRoleSetup] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [showUserManagement, setShowUserManagement] = useState<boolean>(false);
@@ -72,6 +76,9 @@ const App: React.FC = () => {
     const settings = storageService.getUserSettings(userId);
     setSystemPrompt(settings.systemPrompt);
     setSpeechRate(settings.speechRate);
+    setApiKey(settings.apiKey);
+    setVoiceModel(settings.voiceModel);
+    setSummaryModel(settings.summaryModel);
 
     // Load transcript
     const savedTranscript = storageService.getUserTranscript(userId);
@@ -82,6 +89,9 @@ const App: React.FC = () => {
     // For now, we trust the default from storageService, but if it was empty we'd show modal
     if (!settings.systemPrompt) {
       setShowRoleSetup(true);
+    }
+    if (!settings.apiKey) {
+      setShowApiKeySetup(true);
     }
   };
 
@@ -97,10 +107,13 @@ const App: React.FC = () => {
     if (currentUser) {
       storageService.saveUserSettings(currentUser, {
         systemPrompt,
-        speechRate
+        speechRate,
+        apiKey,
+        voiceModel,
+        summaryModel
       });
     }
-  }, [systemPrompt, speechRate, currentUser]);
+  }, [systemPrompt, speechRate, apiKey, voiceModel, summaryModel, currentUser]);
 
   const currentTranscriptionRef = useRef({ user: '', ai: '' });
 
@@ -131,7 +144,9 @@ const App: React.FC = () => {
       const existingSummary = storageService.getLearningSummary(userId);
       const newSummary = await generateLearningSummary(
         currentTranscript,
-        existingSummary?.summary
+        existingSummary?.summary,
+        apiKey,
+        summaryModel
       );
       storageService.saveLearningSummary(userId, newSummary);
       console.log('Learning summary updated automatically');
@@ -141,7 +156,7 @@ const App: React.FC = () => {
       setIsGeneratingSummary(false);
       isGeneratingSummaryRef.current = false;
     }
-  }, []);
+  }, [apiKey, summaryModel]);
 
   const handleMessage = useCallback((message: LiveServerMessage) => {
     if (message.serverContent?.outputTranscription) {
@@ -203,9 +218,25 @@ const App: React.FC = () => {
     setStatus('live');
   }, []);
 
+  const [showApiKeySetup, setShowApiKeySetup] = useState<boolean>(false);
+
+  const handleApiKeySetupComplete = (apiKeyValue: string) => {
+    setApiKey(apiKeyValue);
+    setShowApiKeySetup(false);
+  };
+
   const startConversation = async () => {
     if (!currentUser) {
       setShowUserManagement(true);
+      return;
+    }
+
+    if (!apiKey.trim()) {
+      setErrorMessage('請先在設定中輸入 Gemini API 金鑰');
+      return;
+    }
+    if (!voiceModel.trim()) {
+      setErrorMessage('請在設定中確認語音模型 (展開設定查看)');
       return;
     }
 
@@ -229,6 +260,8 @@ const App: React.FC = () => {
       const session = await connectToGeminiLive({
         stream,
         systemPrompt: enhancedPrompt,
+        apiKey,
+        voiceModel,
         onMessage: handleMessage,
         onError: handleError,
         onClose: handleClose,
@@ -293,6 +326,8 @@ const App: React.FC = () => {
 
   return (
     <>
+      {/* API Key Setup Modal */}
+      {showApiKeySetup && <ApiKeyModal onComplete={handleApiKeySetupComplete} />}
       {/* Role Setup Modal */}
       {showRoleSetup && <RoleSetupModal onComplete={handleRoleSetupComplete} />}
 
@@ -373,6 +408,12 @@ const App: React.FC = () => {
           setSystemPrompt={setSystemPrompt}
           speechRate={speechRate}
           setSpeechRate={setSpeechRate}
+          apiKey={apiKey}
+          setApiKey={setApiKey}
+          voiceModel={voiceModel}
+          setVoiceModel={setVoiceModel}
+          summaryModel={summaryModel}
+          setSummaryModel={setSummaryModel}
           onToggleConversation={handleToggleConversation}
           clearHistory={clearHistory}
         />

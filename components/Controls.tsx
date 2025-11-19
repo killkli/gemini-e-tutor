@@ -9,6 +9,12 @@ interface ControlsProps {
   setSystemPrompt: (prompt: string) => void;
   speechRate: number;
   setSpeechRate: (rate: number) => void;
+  apiKey: string;
+  setApiKey: (key: string) => void;
+  voiceModel: string;
+  setVoiceModel: (model: string) => void;
+  summaryModel: string;
+  setSummaryModel: (model: string) => void;
   onToggleConversation: () => void;
   clearHistory?: () => void;
 }
@@ -19,6 +25,12 @@ const Controls: React.FC<ControlsProps> = ({
   setSystemPrompt,
   speechRate,
   setSpeechRate,
+  apiKey,
+  setApiKey,
+  voiceModel,
+  setVoiceModel,
+  summaryModel,
+  setSummaryModel,
   onToggleConversation,
   clearHistory,
 }) => {
@@ -67,6 +79,117 @@ const Controls: React.FC<ControlsProps> = ({
         {/* Expandable Settings */}
         {showSettings && (
           <div className="space-y-6 animate-fade-in-up">
+            {/* API Key */}
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold" style={{ fontFamily: 'var(--font-display)' }}>
+                    Gemini API Key
+                  </h3>
+                  <p className="text-sm opacity-60">輸入您的 Gemini API 金鑰 (從 Google AI Studio 取得)</p>
+                </div>
+              </div>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                disabled={isRunning}
+                placeholder="輸入 API 金鑰..."
+                className="w-full px-4 py-3 rounded-lg border transition-all duration-200"
+                style={{
+                  fontFamily: 'var(--font-body)',
+                  fontSize: '1rem',
+                  background: 'var(--color-bg-secondary)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-body)',
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              />
+              {isRunning && (
+                <p className="text-xs mt-2 opacity-50 italic">
+                  停止對話才能修改設定
+                </p>
+              )}
+              {!apiKey && !isRunning && (
+                <p className="text-xs mt-2 text-orange-400">請輸入 API 金鑰才能開始對話</p>
+              )}
+            </div>
+
+            <div className="decorative-line"></div>
+
+            {/* Voice Model */}
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.97 13.689a2 2 0 00-1.022-.547l-2.387-.477a6.6 6.6 0 00-.419-0.103a6.6 6.6 0 01-.419-.103l-.477-2.387a2 2 0 00-.547-1.022L3.124 8.167a6 6 0 00.517-3.86l-.158-.318a6 6 0 01.517-3.86l.477-2.387a2 2 0 00.547-1.022L6.311 1.03a6.6 6.6 0 00.103-.419 6.6 6.6 0 01.103-.419l2.387-.477a2 2 0 001.022-.547L13.833 3.124a6 6 0 003.86.517l.318.158a6 6 0 013.86.517l2.387.477a2 2 0 001.022.547l2.387.477a6.6 6.6 0 00.419.103 6.6 6.6 0 01.419.103l.477 2.387a2 2 0 00.547 1.022L20.876 10.833a6 6 0 00-.517 3.86l.158.318a6 6 0 01-.517 3.86l-.477 2.387a2 2 0 00-.547 1.022zM12 9a3 3 0 100 6 3 3 0 000-6z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold" style={{ fontFamily: 'var(--font-display)' }}>
+                    語音對話模型
+                  </h3>
+                  <p className="text-sm opacity-60">Gemini Live API 模型名稱</p>
+                </div>
+              </div>
+              <input
+                type="text"
+                value={voiceModel}
+                onChange={(e) => setVoiceModel(e.target.value)}
+                disabled={isRunning}
+                placeholder="e.g. gemini-2.5-flash-native-audio-preview-09-2025"
+                className="w-full px-4 py-3 rounded-lg border transition-all duration-200"
+                style={{
+                  fontFamily: 'var(--font-mono)', // Monospace for model names
+                  background: 'var(--color-bg-secondary)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-body)',
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              />
+            </div>
+
+            <div className="decorative-line"></div>
+
+            {/* Summary Model */}
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold" style={{ fontFamily: 'var(--font-display)' }}>
+                    學習總結模型
+                  </h3>
+                  <p className="text-sm opacity-60">用於產生學習狀況總結的模型</p>
+                </div>
+              </div>
+              <input
+                type="text"
+                value={summaryModel}
+                onChange={(e) => setSummaryModel(e.target.value)}
+                disabled={isRunning}
+                placeholder="e.g. models/gemini-flash-latest"
+                className="w-full px-4 py-3 rounded-lg border transition-all duration-200"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  background: 'var(--color-bg-secondary)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-body)',
+                  opacity: isRunning ? 0.5 : 1,
+                }}
+              />
+            </div>
+
+            <div className="decorative-line"></div>
+
             {/* AI Tutor Role */}
             <div>
               <div className="flex items-center gap-3 mb-3">

@@ -3,10 +3,12 @@ import { TranscriptEntry } from '../types';
 
 export async function generateLearningSummary(
   transcript: TranscriptEntry[],
-  previousSummary?: string
+  previousSummary?: string,
+  apiKey: string,
+  summaryModel: string
 ): Promise<string> {
-  if (!process.env.API_KEY) {
-    console.error("API_KEY not set for summary generation");
+  if (!apiKey) {
+    console.error("API key not provided for summary generation");
     return previousSummary || "尚無學習總結";
   }
 
@@ -16,7 +18,7 @@ export async function generateLearningSummary(
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
 
     // Use Gemini 2.0 Flash for fast, cost-effective summarization
     // Note: Using 'gemini-2.0-flash' as it's the current production model for text
@@ -69,7 +71,7 @@ ${transcriptText}
     `;
 
     const response = await ai.models.generateContent({
-      model: 'models/gemini-flash-latest',
+      model: summaryModel,
       contents: prompt
     });
 

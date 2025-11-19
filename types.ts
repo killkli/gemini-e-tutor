@@ -16,6 +16,9 @@ export interface UserProfile {
 export interface UserSettings {
   systemPrompt: string;
   speechRate: number;
+  apiKey: string;
+  voiceModel: string;
+  summaryModel: string;
 }
 
 export interface LearningSummary {

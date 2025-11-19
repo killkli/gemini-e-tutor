@@ -148,21 +148,34 @@ interface ConnectToGeminiLiveParams {
     onOpen: () => void;
 }
 
+export interface ConnectToGeminiLiveParams {
+    stream: MediaStream;
+    systemPrompt: string;
+    apiKey: string;
+    voiceModel: string;
+    onMessage: (message: LiveServerMessage) => void;
+    onError: (e: ErrorEvent) => void;
+    onClose: (e: CloseEvent) => void;
+    onOpen: () => void;
+}
+
 export async function connectToGeminiLive({
     stream,
     systemPrompt,
+    apiKey,
+    voiceModel,
     onMessage,
     onError,
     onClose,
     onOpen
 }: ConnectToGeminiLiveParams): Promise<Session> {
-    if (!process.env.API_KEY) {
-        throw new Error("API_KEY environment variable not set");
+    if (!apiKey) {
+        throw new Error("API key not provided");
     }
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
 
     const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        model: voiceModel,
         callbacks: {
             onopen: () => {
                 inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
