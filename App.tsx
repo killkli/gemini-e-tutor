@@ -1,13 +1,14 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Session } from '@google/genai';
-import { AppStatus, TranscriptEntry } from './types';
+import { AppStatus, TranscriptEntry, UserProfile } from './types';
 import { connectToGeminiLive, cleanupAudio, playAudio, finishAudioTurn, stopAllAudio } from './services/geminiService';
+import { storageService } from './services/storageService';
+import { generateLearningSummary } from './services/summaryService';
 import Transcript from './components/Transcript';
 import Controls from './components/Controls';
 import StatusIndicator from './components/StatusIndicator';
 import RoleSetupModal from './components/RoleSetupModal';
-
-const DEFAULT_SYSTEM_PROMPT = `你是一位名叫 Alex 的 AI 英文家教。你的目標是與使用者進行自然、友善的對話，幫助他們練習英語口說能力。當適當的時候，溫和地糾正他們的文法並建議更好的詞彙，但要以對話的方式進行。保持你的回應簡潔且鼓勵人心。`;
+import UserManagement from './components/UserManagement';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>('idle');
@@ -16,55 +17,90 @@ const App: React.FC = () => {
   const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [speechRate, setSpeechRate] = useState<number>(1.0);
   const [showRoleSetup, setShowRoleSetup] = useState<boolean>(false);
-
-  const STORAGE_KEY = 'geminiTutorChatHistory' as const;
-  const ROLE_STORAGE_KEY = 'geminiTutorSystemPrompt' as const;
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [showUserManagement, setShowUserManagement] = useState<boolean>(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
 
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Use refs for current user and transcript to access them in callbacks/cleanup
+  const currentUserRef = useRef<string | null>(null);
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
+  const isGeneratingSummaryRef = useRef(false);
 
-  // Load system prompt and chat history on mount
+  // Initialize user on mount
   useEffect(() => {
-    try {
-      // Check for saved system prompt
-      const savedPrompt = localStorage.getItem(ROLE_STORAGE_KEY);
-      if (savedPrompt) {
-        setSystemPrompt(savedPrompt);
+    const savedUserId = storageService.getCurrentUserId();
+    if (savedUserId) {
+      // Verify user still exists
+      const users = storageService.getUsers();
+      if (users.some(u => u.id === savedUserId)) {
+        handleUserSelect(savedUserId);
       } else {
-        // First time user - show setup modal
-        setShowRoleSetup(true);
+        // User ID exists in storage but user data is gone
+        setShowUserManagement(true);
       }
-
-      // Load chat history
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setTranscript(JSON.parse(saved));
-      }
-    } catch (e) {
-      console.warn('Failed to load saved data:', e);
-      setShowRoleSetup(true);
+    } else {
+      setShowUserManagement(true);
     }
   }, []);
 
-  // Auto-save chat history (limit to last 20 entries)
+  // Update refs when state changes
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(transcript.slice(-20)));
-    } catch (e) {
-      console.warn('Failed to save chat history:', e);
-    }
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  useEffect(() => {
+    transcriptRef.current = transcript;
   }, [transcript]);
 
-  // Auto-save system prompt
-  useEffect(() => {
-    if (systemPrompt) {
-      try {
-        localStorage.setItem(ROLE_STORAGE_KEY, systemPrompt);
-      } catch (e) {
-        console.warn('Failed to save system prompt:', e);
-      }
+  const handleUserSelect = (userId: string) => {
+    if (!userId) {
+      setCurrentUser(null);
+      setShowUserManagement(true);
+      return;
     }
-  }, [systemPrompt]);
+
+    setCurrentUser(userId);
+    storageService.setCurrentUserId(userId);
+    setShowUserManagement(false);
+    loadUserData(userId);
+  };
+
+  const loadUserData = (userId: string) => {
+    // Load settings
+    const settings = storageService.getUserSettings(userId);
+    setSystemPrompt(settings.systemPrompt);
+    setSpeechRate(settings.speechRate);
+
+    // Load transcript
+    const savedTranscript = storageService.getUserTranscript(userId);
+    setTranscript(savedTranscript);
+
+    // If no system prompt is set (e.g. new user who hasn't completed setup), show setup
+    // Note: storageService sets a default prompt, but we might want to let them customize it initially
+    // For now, we trust the default from storageService, but if it was empty we'd show modal
+    if (!settings.systemPrompt) {
+      setShowRoleSetup(true);
+    }
+  };
+
+  // Auto-save transcript changes
+  useEffect(() => {
+    if (currentUser && transcript.length > 0) {
+      storageService.saveUserTranscript(currentUser, transcript);
+    }
+  }, [transcript, currentUser]);
+
+  // Auto-save settings changes
+  useEffect(() => {
+    if (currentUser) {
+      storageService.saveUserSettings(currentUser, {
+        systemPrompt,
+        speechRate
+      });
+    }
+  }, [systemPrompt, speechRate, currentUser]);
 
   const currentTranscriptionRef = useRef({ user: '', ai: '' });
 
@@ -82,6 +118,31 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleGenerateSummary = useCallback(async () => {
+    const userId = currentUserRef.current;
+    const currentTranscript = transcriptRef.current;
+
+    if (!userId || currentTranscript.length < 4 || isGeneratingSummaryRef.current) return;
+
+    try {
+      setIsGeneratingSummary(true);
+      isGeneratingSummaryRef.current = true;
+
+      const existingSummary = storageService.getLearningSummary(userId);
+      const newSummary = await generateLearningSummary(
+        currentTranscript,
+        existingSummary?.summary
+      );
+      storageService.saveLearningSummary(userId, newSummary);
+      console.log('Learning summary updated automatically');
+    } catch (e) {
+      console.error('Failed to update learning summary', e);
+    } finally {
+      setIsGeneratingSummary(false);
+      isGeneratingSummaryRef.current = false;
+    }
+  }, []);
+
   const handleMessage = useCallback((message: LiveServerMessage) => {
     if (message.serverContent?.outputTranscription) {
       currentTranscriptionRef.current.ai += message.serverContent.outputTranscription.text;
@@ -96,8 +157,8 @@ const App: React.FC = () => {
 
       setTranscript(prev => {
         const newEntries: TranscriptEntry[] = [];
-        if (userText) newEntries.push({ speaker: 'user', text: userText });
-        if (aiText) newEntries.push({ speaker: 'ai', text: aiText });
+        if (userText) newEntries.push({ speaker: 'user', text: userText, timestamp: Date.now() });
+        if (aiText) newEntries.push({ speaker: 'ai', text: aiText, timestamp: Date.now() });
         return [...prev, ...newEntries];
       });
 
@@ -122,7 +183,10 @@ const App: React.FC = () => {
     setErrorMessage('An error occurred with the connection. Please try again.');
     setStatus('error');
     cleanup();
-  }, [cleanup]);
+
+    // Generate summary on error/disconnect if enough content
+    handleGenerateSummary();
+  }, [cleanup, handleGenerateSummary]);
 
   const handleClose = useCallback((e: CloseEvent) => {
     console.log('Gemini Live API connection closed.');
@@ -130,25 +194,37 @@ const App: React.FC = () => {
     if (status !== 'error') {
       setStatus('idle');
     }
-  }, [status, cleanup]);
+
+    // Generate summary on close if enough content
+    handleGenerateSummary();
+  }, [status, cleanup, handleGenerateSummary]);
 
   const handleOpen = useCallback(() => {
     setStatus('live');
   }, []);
 
   const startConversation = async () => {
+    if (!currentUser) {
+      setShowUserManagement(true);
+      return;
+    }
+
     setStatus('connecting');
     setErrorMessage(null);
-    // Keep existing transcript for context, don't clear
-    cleanup(); // Clean up any previous state
+    cleanup();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
       // Build conversation history context (last 10 turns)
-      const historyContext = transcript.slice(-10).map(entry => `${entry.speaker.toUpperCase()}: ${entry.text}`).join('\\n');
-      const enhancedPrompt = `${systemPrompt}\\n\\nContinue this conversation from the following history:\\n${historyContext}`;
+      const historyContext = transcript.slice(-10).map(entry => `${entry.speaker.toUpperCase()}: ${entry.text}`).join('\n');
+
+      // Get learning summary if available
+      const learningSummary = storageService.getLearningSummary(currentUser);
+      const learningContext = learningSummary ? `\n\nUser Learning Status Summary:\n${learningSummary.summary}` : '';
+
+      const enhancedPrompt = `${systemPrompt}${learningContext}\n\nContinue this conversation from the following history:\n${historyContext}`;
 
       const session = await connectToGeminiLive({
         stream,
@@ -178,12 +254,15 @@ const App: React.FC = () => {
       setStatus('stopping');
       sessionRef.current.close();
       sessionRef.current = null;
+      // handleClose will be called automatically, which triggers summary generation
     }
   };
 
   const clearHistory = () => {
     setTranscript([]);
-    localStorage.removeItem(STORAGE_KEY);
+    if (currentUser) {
+      storageService.saveUserTranscript(currentUser, []);
+    }
   };
 
   const handleToggleConversation = () => {
@@ -203,14 +282,55 @@ const App: React.FC = () => {
     }
   }, [cleanup]);
 
+  // If we're in user management mode and not already showing it via a button click
+  if (!currentUser && !showUserManagement) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 animate-fade-in">
+         <UserManagement onUserSelect={handleUserSelect} currentUser={currentUser} />
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Role Setup Modal */}
       {showRoleSetup && <RoleSetupModal onComplete={handleRoleSetupComplete} />}
 
+      {/* User Management Modal */}
+      {showUserManagement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <UserManagement onUserSelect={handleUserSelect} currentUser={currentUser} />
+            {currentUser && (
+              <button
+                onClick={() => setShowUserManagement(false)}
+                className="mt-4 w-full py-2 text-gray-400 hover:text-white transition-colors"
+              >
+                返回
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="min-h-screen flex flex-col p-4 sm:p-6 lg:p-8">
         {/* Header */}
-        <header className="text-center mb-8 animate-fade-in-up">
+        <header className="text-center mb-8 animate-fade-in-up relative">
+        {currentUser && (
+          <div className="absolute right-0 top-0 flex items-center gap-2">
+            {isGeneratingSummary && (
+               <span className="text-xs text-amber-400 animate-pulse">正在更新學習狀況...</span>
+            )}
+            <button
+              onClick={() => setShowUserManagement(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm flex items-center gap-2 transition-colors"
+            >
+              <span>👤</span>
+              <span>切換使用者</span>
+            </button>
+          </div>
+        )}
+
         <h1
           className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gradient mb-2"
           style={{ fontFamily: 'var(--font-display)' }}
