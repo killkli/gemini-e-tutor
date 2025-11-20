@@ -89,26 +89,35 @@ export const storageService = {
   },
 
   // Transcript
-  getUserTranscript: (userId: string): TranscriptEntry[] => {
+  getUserTranscript: (userId: string, contextId?: string): TranscriptEntry[] => {
     try {
-      const transcript = localStorage.getItem(STORAGE_KEYS.TRANSCRIPT_PREFIX + userId);
+      const key = contextId
+        ? `${STORAGE_KEYS.TRANSCRIPT_PREFIX}${userId}_${contextId}`
+        : STORAGE_KEYS.TRANSCRIPT_PREFIX + userId;
+
+      const transcript = localStorage.getItem(key);
       return transcript ? JSON.parse(transcript) : [];
     } catch (e) {
-      console.error(`Failed to load transcript for user ${userId}:`, e);
+      console.error(`Failed to load transcript for user ${userId} (context: ${contextId}):`, e);
       return [];
     }
   },
 
-  saveUserTranscript: (userId: string, transcript: TranscriptEntry[]) => {
+  saveUserTranscript: (userId: string, transcript: TranscriptEntry[], contextId?: string) => {
     // Limit to last 100 entries to prevent overflow, but keep enough for history
     // We might want to archive older ones later if needed, but for now simple truncation
     const recentTranscript = transcript.slice(-100);
-    localStorage.setItem(STORAGE_KEYS.TRANSCRIPT_PREFIX + userId, JSON.stringify(recentTranscript));
+
+    const key = contextId
+      ? `${STORAGE_KEYS.TRANSCRIPT_PREFIX}${userId}_${contextId}`
+      : STORAGE_KEYS.TRANSCRIPT_PREFIX + userId;
+
+    localStorage.setItem(key, JSON.stringify(recentTranscript));
   },
 
   // Learning Summary
   getLearningSummary: (userId: string): LearningSummary | null => {
-     try {
+    try {
       const summary = localStorage.getItem(STORAGE_KEYS.SUMMARY_PREFIX + userId);
       return summary ? JSON.parse(summary) : null;
     } catch (e) {
@@ -119,9 +128,9 @@ export const storageService = {
 
   saveLearningSummary: (userId: string, summary: string) => {
     const learningSummary: LearningSummary = {
-        userId,
-        summary,
-        lastGenerated: Date.now()
+      userId,
+      summary,
+      lastGenerated: Date.now()
     };
     localStorage.setItem(STORAGE_KEYS.SUMMARY_PREFIX + userId, JSON.stringify(learningSummary));
   }

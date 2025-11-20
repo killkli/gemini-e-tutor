@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Session } from '@google/genai';
-import { AppStatus, TranscriptEntry, UserProfile } from './types';
+import { LiveServerMessage, Session } from '@google/genai';
+import { AppStatus, TranscriptEntry } from './types';
 import { connectToGeminiLive, cleanupAudio, playAudio, finishAudioTurn, stopAllAudio } from './services/geminiService';
 import { storageService } from './services/storageService';
 import { generateLearningSummary } from './services/summaryService';
@@ -10,6 +10,8 @@ import StatusIndicator from './components/StatusIndicator';
 import RoleSetupModal from './components/RoleSetupModal';
 import UserManagement from './components/UserManagement';
 import ApiKeyModal from './components/ApiKeyModal';
+import LearningSelector from './components/LearningSelector';
+import { promptService } from './services/promptService';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>('idle');
@@ -25,12 +27,22 @@ const App: React.FC = () => {
   const [showUserManagement, setShowUserManagement] = useState<boolean>(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
 
+  // Learning Context State
+  const [selectedGrade, setSelectedGrade] = useState<number>(3);
+  const [selectedSubject, setSelectedSubject] = useState<'english' | 'chinese'>('english');
+
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
   // Use refs for current user and transcript to access them in callbacks/cleanup
   const currentUserRef = useRef<string | null>(null);
   const transcriptRef = useRef<TranscriptEntry[]>([]);
   const isGeneratingSummaryRef = useRef(false);
+  const selectedGradeRef = useRef(selectedGrade);
+  const selectedSubjectRef = useRef(selectedSubject);
+
+  // Track the context ID that the current transcript belongs to
+  const activeContextIdRef = useRef(`${selectedSubject}-${selectedGrade}`);
 
   // Initialize user on mount
   useEffect(() => {
@@ -58,6 +70,32 @@ const App: React.FC = () => {
     transcriptRef.current = transcript;
   }, [transcript]);
 
+  useEffect(() => {
+    selectedGradeRef.current = selectedGrade;
+    selectedSubjectRef.current = selectedSubject;
+  }, [selectedGrade, selectedSubject]);
+
+  // Update prompt and transcript when context changes
+  useEffect(() => {
+    if (currentUser) {
+      updateContext(currentUser, selectedGrade, selectedSubject);
+    }
+  }, [selectedGrade, selectedSubject, currentUser]);
+
+  const updateContext = (userId: string, grade: number, subject: 'english' | 'chinese') => {
+    // 1. Update System Prompt
+    const newPrompt = promptService.getPrompt(grade, subject);
+    setSystemPrompt(newPrompt);
+
+    // 2. Load Context-Specific Transcript
+    const contextId = `${subject}-${grade}`;
+    const savedTranscript = storageService.getUserTranscript(userId, contextId);
+
+    // Update the ref BEFORE setting state so that if any effects run, they know the new context
+    activeContextIdRef.current = contextId;
+    setTranscript(savedTranscript);
+  };
+
   const handleUserSelect = (userId: string) => {
     if (!userId) {
       setCurrentUser(null);
@@ -74,22 +112,15 @@ const App: React.FC = () => {
   const loadUserData = (userId: string) => {
     // Load settings
     const settings = storageService.getUserSettings(userId);
-    setSystemPrompt(settings.systemPrompt);
+    // setSystemPrompt(settings.systemPrompt); // We now set this based on grade/subject
     setSpeechRate(settings.speechRate);
     setApiKey(settings.apiKey);
     setVoiceModel(settings.voiceModel);
     setSummaryModel(settings.summaryModel);
 
-    // Load transcript
-    const savedTranscript = storageService.getUserTranscript(userId);
-    setTranscript(savedTranscript);
+    // Initial load with default grade/subject
+    updateContext(userId, selectedGrade, selectedSubject);
 
-    // If no system prompt is set (e.g. new user who hasn't completed setup), show setup
-    // Note: storageService sets a default prompt, but we might want to let them customize it initially
-    // For now, we trust the default from storageService, but if it was empty we'd show modal
-    if (!settings.systemPrompt) {
-      setShowRoleSetup(true);
-    }
     if (!settings.apiKey) {
       setShowApiKeySetup(true);
     }
@@ -97,16 +128,18 @@ const App: React.FC = () => {
 
   // Auto-save transcript changes
   useEffect(() => {
+    // Only save if we have a user and transcript
+    // We use the ref to ensure we are saving to the context that matches the current transcript
     if (currentUser && transcript.length > 0) {
-      storageService.saveUserTranscript(currentUser, transcript);
+      storageService.saveUserTranscript(currentUser, transcript, activeContextIdRef.current);
     }
-  }, [transcript, currentUser]);
+  }, [transcript, currentUser]); // Removed selectedGrade/Subject from dependencies
 
   // Auto-save settings changes
   useEffect(() => {
     if (currentUser) {
       storageService.saveUserSettings(currentUser, {
-        systemPrompt,
+        systemPrompt, // Note: This might be overwritten by context switching, but we save it anyway
         speechRate,
         apiKey,
         voiceModel,
@@ -294,7 +327,8 @@ const App: React.FC = () => {
   const clearHistory = () => {
     setTranscript([]);
     if (currentUser) {
-      storageService.saveUserTranscript(currentUser, []);
+      const contextId = `${selectedSubject}-${selectedGrade}`;
+      storageService.saveUserTranscript(currentUser, [], contextId);
     }
   };
 
@@ -319,7 +353,7 @@ const App: React.FC = () => {
   if (!currentUser && !showUserManagement) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-4 animate-fade-in">
-         <UserManagement onUserSelect={handleUserSelect} currentUser={currentUser} />
+        <UserManagement onUserSelect={handleUserSelect} currentUser={currentUser} />
       </div>
     );
   }
@@ -351,79 +385,87 @@ const App: React.FC = () => {
       <div className="min-h-screen flex flex-col p-4 sm:p-6 lg:p-8">
         {/* Header */}
         <header className="text-center mb-8 animate-fade-in-up relative">
-        {currentUser && (
-          <div className="absolute right-0 top-0 flex items-center gap-2">
-            {isGeneratingSummary && (
-               <span className="text-xs text-amber-400 animate-pulse">正在更新學習狀況...</span>
-            )}
-            <button
-              onClick={() => setShowUserManagement(true)}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm flex items-center gap-2 transition-colors"
-            >
-              <span>👤</span>
-              <span>切換使用者</span>
-            </button>
-          </div>
-        )}
-
-        <h1
-          className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gradient mb-2"
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          英文家教
-        </h1>
-        <p className="opacity-70" style={{ fontFamily: 'var(--font-body)' }}>
-          與 Gemini AI 助理一起練習您的英文
-        </p>
-        <div className="decorative-line mt-4 max-w-md mx-auto"></div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-grow flex flex-col gap-6 max-w-5xl w-full mx-auto">
-        {/* Status / Error Display */}
-        <div className="flex items-center justify-center min-h-[3rem]">
-          {errorMessage ? (
-            <div
-              className="px-6 py-3 rounded-lg border animate-fade-in-up"
-              style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                borderColor: '#ef4444',
-                color: '#fca5a5',
-              }}
-            >
-              <p className="text-base font-medium">{errorMessage}</p>
+          {currentUser && (
+            <div className="absolute right-0 top-0 flex items-center gap-2">
+              {isGeneratingSummary && (
+                <span className="text-xs text-amber-400 animate-pulse">正在更新學習狀況...</span>
+              )}
+              <button
+                onClick={() => setShowUserManagement(true)}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm flex items-center gap-2 transition-colors"
+              >
+                <span>👤</span>
+                <span>切換使用者</span>
+              </button>
             </div>
-          ) : (
-            <StatusIndicator status={status} />
           )}
-        </div>
 
-        {/* Transcript */}
-        <Transcript entries={transcript} />
+          <h1
+            className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gradient mb-2"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            英文家教
+          </h1>
+          <p className="opacity-70" style={{ fontFamily: 'var(--font-body)' }}>
+            與 Gemini AI 助理一起練習您的英文
+          </p>
+          <div className="decorative-line mt-4 max-w-md mx-auto"></div>
+        </header>
 
-        {/* Controls */}
-        <Controls
-          status={status}
-          systemPrompt={systemPrompt}
-          setSystemPrompt={setSystemPrompt}
-          speechRate={speechRate}
-          setSpeechRate={setSpeechRate}
-          apiKey={apiKey}
-          setApiKey={setApiKey}
-          voiceModel={voiceModel}
-          setVoiceModel={setVoiceModel}
-          summaryModel={summaryModel}
-          setSummaryModel={setSummaryModel}
-          onToggleConversation={handleToggleConversation}
-          clearHistory={clearHistory}
+        {/* Learning Selector */}
+        <LearningSelector
+          selectedGrade={selectedGrade}
+          selectedSubject={selectedSubject}
+          onGradeChange={setSelectedGrade}
+          onSubjectChange={setSelectedSubject}
         />
-      </main>
 
-      {/* Footer */}
-      <footer className="text-center mt-8 opacity-40" style={{ fontFamily: 'var(--font-body)' }}>
-        <p className="text-xs">由 Google Gemini 提供支援 • 僅供教育用途</p>
-      </footer>
-    </div>
+        {/* Main Content */}
+        <main className="flex-grow flex flex-col gap-6 max-w-5xl w-full mx-auto">
+          {/* Status / Error Display */}
+          <div className="flex items-center justify-center min-h-[3rem]">
+            {errorMessage ? (
+              <div
+                className="px-6 py-3 rounded-lg border animate-fade-in-up"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  borderColor: '#ef4444',
+                  color: '#fca5a5',
+                }}
+              >
+                <p className="text-base font-medium">{errorMessage}</p>
+              </div>
+            ) : (
+              <StatusIndicator status={status} />
+            )}
+          </div>
+
+          {/* Transcript */}
+          <Transcript entries={transcript} />
+
+          {/* Controls */}
+          <Controls
+            status={status}
+            systemPrompt={systemPrompt}
+            setSystemPrompt={setSystemPrompt}
+            speechRate={speechRate}
+            setSpeechRate={setSpeechRate}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            voiceModel={voiceModel}
+            setVoiceModel={setVoiceModel}
+            summaryModel={summaryModel}
+            setSummaryModel={setSummaryModel}
+            onToggleConversation={handleToggleConversation}
+            clearHistory={clearHistory}
+          />
+        </main>
+
+        {/* Footer */}
+        <footer className="text-center mt-8 opacity-40" style={{ fontFamily: 'var(--font-body)' }}>
+          <p className="text-xs">由 Google Gemini 提供支援 • 僅供教育用途</p>
+        </footer>
+      </div>
     </>
   );
 };

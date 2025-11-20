@@ -3,41 +3,41 @@ import { GoogleGenAI, LiveServerMessage, Modality, Session, Blob } from '@google
 // --- Audio Encoding/Decoding Utilities ---
 
 function encode(bytes: Uint8Array): string {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
 }
 
 function decode(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
 }
 
 async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
+    data: Uint8Array,
+    ctx: AudioContext,
+    sampleRate: number,
+    numChannels: number,
 ): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+    const dataInt16 = new Int16Array(data.buffer);
+    const frameCount = dataInt16.length / numChannels;
+    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    for (let channel = 0; channel < numChannels; channel++) {
+        const channelData = buffer.getChannelData(channel);
+        for (let i = 0; i < frameCount; i++) {
+            channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+        }
     }
-  }
-  return buffer;
+    return buffer;
 }
 
 function createPcmBlob(data: Float32Array): Blob {
@@ -56,49 +56,49 @@ function createPcmBlob(data: Float32Array): Blob {
  * Converts PCM audio data to WAV format
  */
 function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number): ArrayBuffer {
-  const bytesPerSample = 2; // 16-bit
-  const blockAlign = numChannels * bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = pcmData.length;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
+    const bytesPerSample = 2; // 16-bit
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = pcmData.length;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
 
-  // WAV header
-  const writeString = (offset: number, string: string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  };
+    // WAV header
+    const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    };
 
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true); // fmt chunk size
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true); // bits per sample
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt chunk size
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true); // bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
 
-  // Copy PCM data
-  const pcmView = new Uint8Array(buffer, 44);
-  pcmView.set(pcmData);
+    // Copy PCM data
+    const pcmView = new Uint8Array(buffer, 44);
+    pcmView.set(pcmData);
 
-  return buffer;
+    return buffer;
 }
 
 /**
  * Converts base64 PCM audio to WAV Blob URL for use with HTMLAudioElement
  */
 function createWavBlobUrl(base64Data: string, sampleRate: number, numChannels: number): string {
-  const pcmData = decode(base64Data);
-  const wavData = pcmToWav(pcmData, sampleRate, numChannels);
-  const blob = new window.Blob([wavData], { type: 'audio/wav' });
-  return URL.createObjectURL(blob);
+    const pcmData = decode(base64Data);
+    const wavData = pcmToWav(pcmData, sampleRate, numChannels);
+    const blob = new window.Blob([wavData], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
 }
 
 
@@ -139,14 +139,7 @@ function getBatchConfig(speechRate: number) {
     };
 }
 
-interface ConnectToGeminiLiveParams {
-    stream: MediaStream;
-    systemPrompt: string;
-    onMessage: (message: LiveServerMessage) => void;
-    onError: (e: ErrorEvent) => void;
-    onClose: (e: CloseEvent) => void;
-    onOpen: () => void;
-}
+
 
 export interface ConnectToGeminiLiveParams {
     stream: MediaStream;
@@ -179,10 +172,10 @@ export async function connectToGeminiLive({
         callbacks: {
             onopen: () => {
                 inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                
+
                 mediaStreamSource = inputAudioContext.createMediaStreamSource(stream);
                 scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-                
+
                 scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
                     const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
                     const pcmBlob = createPcmBlob(inputData);
@@ -190,7 +183,7 @@ export async function connectToGeminiLive({
                         session.sendRealtimeInput({ media: pcmBlob });
                     });
                 };
-                
+
                 mediaStreamSource.connect(scriptProcessor);
                 scriptProcessor.connect(inputAudioContext.destination);
                 onOpen();
@@ -306,9 +299,9 @@ function playNextInQueue() {
     // Monitor playback progress to trigger next audio early
     audio.ontimeupdate = () => {
         if (hasTriggeredNext) return;
-        
+
         const remaining = audio.duration - audio.currentTime;
-        
+
         // Start next audio when 30ms remaining to eliminate gap
         if (remaining <= 0.03 && audioQueue.length > 0) {
             hasTriggeredNext = true;
@@ -321,7 +314,7 @@ function playNextInQueue() {
         console.log('[playNextInQueue] Audio ended');
         URL.revokeObjectURL(url);
         currentAudioElement = null;
-        
+
         // Only trigger next if we didn't already do it early
         if (!hasTriggeredNext && audioQueue.length > 0) {
             playNextInQueue();
@@ -384,16 +377,16 @@ export async function playAudio(base64Audio: string, speechRate: number) {
 export async function finishAudioTurn() {
     // Flush any remaining buffered chunks when turn is complete
     console.log('[finishAudioTurn] Turn complete, flushing remaining chunks');
-    
+
     // Clear timeout if any
     if (chunkBatchTimer) {
         clearTimeout(chunkBatchTimer);
         chunkBatchTimer = null;
     }
-    
+
     // Flush remaining chunks
     flushAudioBatch();
-    
+
     console.log('[finishAudioTurn] Audio turn complete');
 }
 
