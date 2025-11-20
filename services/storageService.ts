@@ -116,22 +116,39 @@ export const storageService = {
   },
 
   // Learning Summary
-  getLearningSummary: (userId: string): LearningSummary | null => {
+  getLearningSummary: (userId: string, subject: 'english' | 'chinese'): LearningSummary | null => {
     try {
-      const summary = localStorage.getItem(STORAGE_KEYS.SUMMARY_PREFIX + userId);
-      return summary ? JSON.parse(summary) : null;
+      const key = `${STORAGE_KEYS.SUMMARY_PREFIX}${userId}_${subject}`;
+      const summary = localStorage.getItem(key);
+      if (summary) {
+        return JSON.parse(summary);
+      }
+
+      // Fallback for backward compatibility: check old key
+      // If found, we can migrate it or just return it (assuming it was English)
+      // Let's just check the old key if the new one doesn't exist
+      if (subject === 'english') {
+        const oldSummary = localStorage.getItem(STORAGE_KEYS.SUMMARY_PREFIX + userId);
+        if (oldSummary) {
+          return JSON.parse(oldSummary);
+        }
+      }
+
+      return null;
     } catch (e) {
       console.error(`Failed to load summary for user ${userId}:`, e);
       return null;
     }
   },
 
-  saveLearningSummary: (userId: string, summary: string) => {
+  saveLearningSummary: (userId: string, summary: string, subject: 'english' | 'chinese') => {
     const learningSummary: LearningSummary = {
       userId,
+      subject,
       summary,
       lastGenerated: Date.now()
     };
-    localStorage.setItem(STORAGE_KEYS.SUMMARY_PREFIX + userId, JSON.stringify(learningSummary));
+    const key = `${STORAGE_KEYS.SUMMARY_PREFIX}${userId}_${subject}`;
+    localStorage.setItem(key, JSON.stringify(learningSummary));
   }
 };

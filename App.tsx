@@ -174,14 +174,15 @@ const App: React.FC = () => {
       setIsGeneratingSummary(true);
       isGeneratingSummaryRef.current = true;
 
-      const existingSummary = storageService.getLearningSummary(userId);
+      const existingSummary = storageService.getLearningSummary(userId, selectedSubjectRef.current);
       const newSummary = await generateLearningSummary(
         currentTranscript,
         existingSummary?.summary,
         apiKey,
-        summaryModel
+        summaryModel,
+        selectedSubjectRef.current
       );
-      storageService.saveLearningSummary(userId, newSummary);
+      storageService.saveLearningSummary(userId, newSummary, selectedSubjectRef.current);
       console.log('Learning summary updated automatically');
     } catch (e) {
       console.error('Failed to update learning summary', e);
@@ -285,7 +286,7 @@ const App: React.FC = () => {
       const historyContext = transcript.slice(-10).map(entry => `${entry.speaker.toUpperCase()}: ${entry.text}`).join('\n');
 
       // Get learning summary if available
-      const learningSummary = storageService.getLearningSummary(currentUser);
+      const learningSummary = storageService.getLearningSummary(currentUser, selectedSubject);
       const learningContext = learningSummary ? `\n\nUser Learning Status Summary:\n${learningSummary.summary}` : '';
 
       const enhancedPrompt = `${systemPrompt}${learningContext}\n\nContinue this conversation from the following history:\n${historyContext}`;

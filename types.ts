@@ -23,6 +23,7 @@ export interface UserSettings {
 
 export interface LearningSummary {
   userId: string;
+  subject: 'english' | 'chinese';
   summary: string;
   lastGenerated: number;
 }
